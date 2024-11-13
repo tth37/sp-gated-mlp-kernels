@@ -35,3 +35,7 @@ def idx_to_mask(IDX, Q, HIDDEN_DIM):
     for i in range(IDX.shape[0]):
         MASK[i].scatter_(0, IDX_int64[i], 1)
     return MASK
+
+def mask_to_idx(MASK, HIDDEN_DIM):
+    IDX = torch.nonzero(MASK, as_tuple=False)
+    return IDX[:, 1]
