@@ -23,9 +23,12 @@ parser.add_argument("--batch-size", type=int, required=True)
 parser.add_argument("--embed-dim", type=int, required=True)
 parser.add_argument("--hidden-dim", type=int, required=True)
 parser.add_argument("--sparsity", type=float, required=True)
+parser.add_argument("--block-size-m", type=int, required=True)
 parser.add_argument("--op", type=str, required=True)
 args = parser.parse_args()
 
+# print("BLOCK_SIZE_M:", args.block_size_m)
+logger.info(f"BLOCK_SIZE_M: {args.block_size_m}")
 BATCH_SIZE = args.batch_size
 EMBED_DIM = args.embed_dim
 HIDDEN_DIM = args.hidden_dim
@@ -55,7 +58,7 @@ if args.op == "gemm_bcsr":
         bench_sparsemm_gemm_bcsr,
         (BATCH_SIZE, EMBED_DIM, HIDDEN_DIM, SPARSITY),
         {
-            "BLOCK_SIZE_M": [128],
+            "BLOCK_SIZE_M": [args.block_size_m],
             "BLOCK_SIZE_N": [16, 32, 64, 128, 256],
             "BLOCK_SIZE_K": [16, 32, 64, 128, 256],
             "GROUP_SIZE_N": [1, 2, 4, 8],

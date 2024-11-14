@@ -1,9 +1,18 @@
 import os
 import torch
+import argparse
 
-BATCH_SIZE = 512
-EMBED_DIM = 5120
-HIDDEN_DIM = 13824
+parser = argparse.ArgumentParser()
+parser.add_argument("--batch-size", type=int, default=512, required=False)
+parser.add_argument("--embed-dim", type=int, default=5120, required=False)
+parser.add_argument("--hidden-dim", type=int, default=13824, required=False)
+parser.add_argument("--block-size-m", type=int, default=64, required=False)
+args = parser.parse_args()
+
+BATCH_SIZE = args.batch_size
+EMBED_DIM = args.embed_dim
+HIDDEN_DIM = args.hidden_dim
+BLOCK_SIZE_M = args.block_size_m
 
 def get_arch():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -18,24 +27,6 @@ SPARSITY_list = [
     0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0,
 ]
 
-# SBATCH_TEMPLATE = """#!/bin/bash
-# #SBATCH -J tune-{arch}-b{BATCH_SIZE}-e{EMBED_DIM}-h{HIDDEN_DIM}-q{Q}
-# #SBATCH -N 1
-# #SBATCH -p {arch}
-# #SBATCH -e sbatch-results/tune-{arch}-b{BATCH_SIZE}-e{EMBED_DIM}-h{HIDDEN_DIM}-q{Q}-{op}.err
-# #SBATCH -o /dev/null
-# #SBATCH --no-requeue
-# #SBATCH --ntasks-per-node=1
-# #SBATCH --gres=gpu:1
-
-# source /apps/soft/anaconda3/bin/activate
-# conda info --envs
-# conda activate /home/fit/renju/WORK/miniconda3/envs/tianhaodong-sparsity-db
-
-# cd /home/fit/renju/WORK/tianhaodong/sp-gated-mlp-kernels
-
-# python3 tune.py --arch {arch} --batch-size {BATCH_SIZE} --embed-dim {EMBED_DIM} --hidden-dim {HIDDEN_DIM} --Q {Q} --op {op}
-# """
 
 # Clear sbatch-results dir
 if os.path.exists("sbatch-results"):
@@ -47,12 +38,7 @@ else:
 for arch in ARCH:
     for SPARSITY in SPARSITY_list:
         for op in OP:
-            # tmp_file = f"/tmp/tune-{arch}-b{BATCH_SIZE}-e{EMBED_DIM}-h{HIDDEN_DIM}-q{Q}-{op}.sh"
-            # with open(tmp_file, "w") as f:
-            #     f.write(SBATCH_TEMPLATE.format(arch=arch, BATCH_SIZE=BATCH_SIZE, EMBED_DIM=EMBED_DIM, HIDDEN_DIM=HIDDEN_DIM, Q=Q, op=op))
-            # os.system(f"sbatch {tmp_file}")
-            # os.remove(tmp_file)
             os.system(
-                f"python3 tune.py --arch {arch} --batch-size {BATCH_SIZE} --embed-dim {EMBED_DIM} --hidden-dim {HIDDEN_DIM} --sparsity {SPARSITY} --op {op} "
-                f"2> sbatch-results/tune-{arch}-b{BATCH_SIZE}-e{EMBED_DIM}-h{HIDDEN_DIM}-sp{SPARSITY}-{op}.err"
+                f"python3 tune.py --arch {arch} --batch-size {BATCH_SIZE} --embed-dim {EMBED_DIM} --hidden-dim {HIDDEN_DIM} --sparsity {SPARSITY} --op {op} --block-size-m {BLOCK_SIZE_M} "
+                f"2> sbatch-results/tune-{arch}-b{BATCH_SIZE}-e{EMBED_DIM}-h{HIDDEN_DIM}-sp{SPARSITY}-b{BLOCK_SIZE_M}-{op}.err"
             )
