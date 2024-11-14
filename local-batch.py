@@ -1,9 +1,16 @@
 import os
+import torch
 
 BATCH_SIZE = 512
 EMBED_DIM = 5120
 HIDDEN_DIM = 13824
-ARCH = ['3090']
+
+def get_arch():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    props = torch.cuda.get_device_properties(device)
+    return props.name.lower().replace(" ", "-")
+
+ARCH = [ get_arch() ]
 OP = ['gemm_bcsr', 'gemm_dense']
 
 SPARSITY_list = [

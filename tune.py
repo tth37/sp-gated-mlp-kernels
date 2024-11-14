@@ -61,7 +61,8 @@ if args.op == "gemm_bcsr":
             "GROUP_SIZE_N": [1, 2, 4, 8],
             "num_stages": [2, 3, 4, 5],
             "num_warps": [4, 8, 16, 32],
-        }
+        },
+        n_trials=N_TRIALS
     )
     write_result("GEMM_BCSR", gemm_bcsr)
 
