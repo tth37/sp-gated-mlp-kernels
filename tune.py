@@ -48,7 +48,7 @@ def write_result(op, result):
             f"{op}={result:.6f}\n"
         )
 
-def write_configs(cfgs):
+def write_configs(cfgs, result):
     del cfgs["BLOCK_SIZE_M"]
 
     try:
@@ -61,15 +61,20 @@ def write_configs(cfgs):
     BLOCK_SIZE_M = str(args.block_size_m)
     sparsity = str(args.sparsity)
 
+    MKN_key = f"M{BATCH_SIZE}_K{EMBED_DIM}_N{HIDDEN_DIM}"
+
     if arch not in cache:
         cache[arch] = {}
-    if BLOCK_SIZE_M not in cache[arch]:
-        cache[arch][BLOCK_SIZE_M] = {}
-    if sparsity not in cache[arch][BLOCK_SIZE_M]:
-        cache[arch][BLOCK_SIZE_M][sparsity] = {}
+    if MKN_key not in cache[arch]:
+        cache[arch][MKN_key] = {}
+    if BLOCK_SIZE_M not in cache[arch][MKN_key]:
+        cache[arch][MKN_key][BLOCK_SIZE_M] = {}
+    if sparsity not in cache[arch][MKN_key][BLOCK_SIZE_M]:
+        cache[arch][MKN_key][BLOCK_SIZE_M][sparsity] = {}
 
     for cfg in cfgs:
-        cache[arch][BLOCK_SIZE_M][sparsity][cfg] = cfgs[cfg]
+        cache[arch][MKN_key][BLOCK_SIZE_M][sparsity][cfg] = cfgs[cfg]
+    cache[arch][MKN_key][BLOCK_SIZE_M][sparsity]["result"] = result
 
     with open("kernel_cache.json", "w") as f:
         json.dump(cache, f, indent=4)
@@ -78,7 +83,7 @@ def write_configs(cfgs):
 if args.op == "gemm_dense":
     A = torch.randn((BATCH_SIZE, EMBED_DIM), device="cuda", dtype=torch.float16)
     B = torch.randn((EMBED_DIM, HIDDEN_DIM), device="cuda", dtype=torch.float16)
-    ms = triton.testing.do_bench(lambda: A @ B)
+    ms = triton.testing.do_bench(lambda: A @ B, warmup=250, rep=1000)
     write_result("GEMM_DENSE", ms)
 
 if args.op == "gemm_bcsr":
@@ -96,7 +101,7 @@ if args.op == "gemm_bcsr":
         n_trials=N_TRIALS
     )
     write_result("GEMM_BCSR", gemm_bcsr)
-    write_configs(cfgs)
+    write_configs(cfgs, gemm_bcsr)
 
 # if args.op == "up_dense":
 #     up_dense = bench_sparsemm_up_dense(BATCH_SIZE, EMBED_DIM, HIDDEN_DIM, P, Q)

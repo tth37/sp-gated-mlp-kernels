@@ -145,7 +145,8 @@ def generate_bcsr(a, BLOCK_SIZE_M, sparsity):
 
 def sparsemm_gemm_bcsr(a, b, BLOCK_SIZE_M=16, BLOCK_SIZE_N=16, BLOCK_SIZE_K=16, GROUP_SIZE_N=4, num_warps=4, num_stages=2):
     M, K = a.shape
-    K, N = b.shape
+    K_b, N = b.shape
+    assert K == K_b, 'Matrix dimensions do not match'
 
     a_row_ptr, a_col_ind, a_val = dense_to_bcsr(a, BLOCK_SIZE_M)
 
@@ -174,14 +175,17 @@ def cached_sparsemm_gemm_bcsr_factory():
     
     arch = get_arch()
     
-    def read_configs(BLOCK_SIZE_M, sparsity):
+    def read_configs(M, K, N, BLOCK_SIZE_M, sparsity):
         if arch not in cache:
             raise ValueError('Arch not found in cache')
-        if BLOCK_SIZE_M not in cache[arch]:
+        MKN_key = f'M{M}_K{K}_N{N}'
+        if MKN_key not in cache[arch]:
+            raise ValueError('MKN not found in cache')
+        if BLOCK_SIZE_M not in cache[arch][MKN_key]:
             raise ValueError('BLOCK_SIZE_M not found in cache')
-        if sparsity not in cache[arch][BLOCK_SIZE_M]:
+        if sparsity not in cache[arch][MKN_key][BLOCK_SIZE_M]:
             raise ValueError('Sparsity not found in cache')
-        return cache[arch][BLOCK_SIZE_M][sparsity]
+        return cache[arch][MKN_key][BLOCK_SIZE_M][sparsity]
     
     def cached_sparsemm_gemm_bcsr(a, b, BLOCK_SIZE_M=16):
         M, K = a.shape
@@ -195,7 +199,7 @@ def cached_sparsemm_gemm_bcsr_factory():
         sparsity = 1.0 - activated_vectors / total_vectors
         sparsity = round(sparsity / 0.05) * 0.05
         
-        cfgs = read_configs(BLOCK_SIZE_M, sparsity)
+        cfgs = read_configs(M, K, N, BLOCK_SIZE_M, sparsity)
 
         c = torch.empty((M, N), device=a_row_ptr.device, dtype=torch.float16)
         grid = (triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, cfgs['BLOCK_SIZE_N']), )
@@ -211,6 +215,8 @@ def cached_sparsemm_gemm_bcsr_factory():
         )
 
         return c
+    
+    return cached_sparsemm_gemm_bcsr
 
 
 
@@ -223,7 +229,7 @@ def bench_sparsemm_gemm_bcsr(
     mask = torch.rand((batch_size // BLOCK_SIZE_M, embed_dim), device=A.device) < sparsity
     expanded_mask = torch.repeat_interleave(mask, BLOCK_SIZE_M, dim=0)
     A[expanded_mask] = 0
-    B = torch.ones((hidden_dim, embed_dim), device="cuda", dtype=torch.float16)
+    B = torch.ones((embed_dim, hidden_dim), device="cuda", dtype=torch.float16)
     
     # a_row_ptr, a_col_ind, a_val = dense_to_bcsr(A, BLOCK_SIZE_M)
     # a_row_ptr, a_col_ind, a_val = generate_bcsr(A, BLOCK_SIZE_M, sparsity)
@@ -235,6 +241,26 @@ def bench_sparsemm_gemm_bcsr(
         print(e)
         return float('inf')
     
+
+
+
+if __name__ == '__main__':
+    batch_size = 512
+    embed_dim = 5120
+    hidden_dim = 13824
+    sparsity = 0.9
+    BLOCK_SIZE_M = 32
+
+    cached_sparsemm_gemm_bcsr = cached_sparsemm_gemm_bcsr_factory()
+
+    A = torch.ones((batch_size, embed_dim), device="cuda", dtype=torch.float16)
+    mask = torch.rand((batch_size // BLOCK_SIZE_M, embed_dim), device=A.device) < sparsity
+    expanded_mask = torch.repeat_interleave(mask, BLOCK_SIZE_M, dim=0)
+    A[expanded_mask] = 0
+    B = torch.ones((hidden_dim, embed_dim), device="cuda", dtype=torch.float16)
+
+    C = cached_sparsemm_gemm_bcsr(A, B, BLOCK_SIZE_M)
+
 
 # # a = torch.tensor([
 # #     [1, 2, 0, 4],
