@@ -15,6 +15,7 @@ from sparsemm_kernels.autotune import autotune
 
 import torch
 import triton
+import json
 
 
 parser = argparse.ArgumentParser()
@@ -47,6 +48,33 @@ def write_result(op, result):
             f"{op}={result:.6f}\n"
         )
 
+def write_configs(cfgs):
+    del cfgs["BLOCK_SIZE_M"]
+
+    try:
+        with open("kernel_cache.json", "r") as f:
+            cache = json.load(f)
+    except FileNotFoundError:
+        cache = {}
+    
+    arch = str(args.arch)
+    BLOCK_SIZE_M = str(args.block_size_m)
+    sparsity = str(args.sparsity)
+
+    if arch not in cache:
+        cache[arch] = {}
+    if BLOCK_SIZE_M not in cache[arch]:
+        cache[arch][BLOCK_SIZE_M] = {}
+    if sparsity not in cache[arch][BLOCK_SIZE_M]:
+        cache[arch][BLOCK_SIZE_M][sparsity] = {}
+
+    for cfg in cfgs:
+        cache[arch][BLOCK_SIZE_M][sparsity][cfg] = cfgs[cfg]
+
+    with open("kernel_cache.json", "w") as f:
+        json.dump(cache, f, indent=4)
+
+
 if args.op == "gemm_dense":
     A = torch.randn((BATCH_SIZE, EMBED_DIM), device="cuda", dtype=torch.float16)
     B = torch.randn((EMBED_DIM, HIDDEN_DIM), device="cuda", dtype=torch.float16)
@@ -54,7 +82,7 @@ if args.op == "gemm_dense":
     write_result("GEMM_DENSE", ms)
 
 if args.op == "gemm_bcsr":
-    _, gemm_bcsr = autotune(
+    cfgs, gemm_bcsr = autotune(
         bench_sparsemm_gemm_bcsr,
         (BATCH_SIZE, EMBED_DIM, HIDDEN_DIM, SPARSITY),
         {
@@ -68,6 +96,7 @@ if args.op == "gemm_bcsr":
         n_trials=N_TRIALS
     )
     write_result("GEMM_BCSR", gemm_bcsr)
+    write_configs(cfgs)
 
 # if args.op == "up_dense":
 #     up_dense = bench_sparsemm_up_dense(BATCH_SIZE, EMBED_DIM, HIDDEN_DIM, P, Q)

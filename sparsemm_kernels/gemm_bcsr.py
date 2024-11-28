@@ -1,6 +1,7 @@
 import triton
 import triton.language as tl
 import torch
+import json
 
 @triton.jit
 def get_m_n(pid, M, N, GROUP_SIZE_M):
@@ -17,6 +18,11 @@ def get_m_n(pid, M, N, GROUP_SIZE_M):
     m = group_start_row + delta_m
     return (m, n) # equiv to blockIdx.m, blockIdx.n
 
+
+def get_arch():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    props = torch.cuda.get_device_properties(device)
+    return props.name.lower().replace(" ", "-")
 
 
 
@@ -143,11 +149,6 @@ def sparsemm_gemm_bcsr(a, b, BLOCK_SIZE_M=16, BLOCK_SIZE_N=16, BLOCK_SIZE_K=16, 
 
     a_row_ptr, a_col_ind, a_val = dense_to_bcsr(a, BLOCK_SIZE_M)
 
-    # BLOCK_SIZE_M = 16
-    # BLOCK_SIZE_N = 16
-    # BLOCK_SIZE_K = 16
-    # GROUP_SIZE_N = 4
-
     c = torch.empty((M, N), device=a_row_ptr.device, dtype=torch.float16)
 
     grid = (triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, BLOCK_SIZE_N), )
@@ -164,13 +165,61 @@ def sparsemm_gemm_bcsr(a, b, BLOCK_SIZE_M=16, BLOCK_SIZE_N=16, BLOCK_SIZE_K=16, 
 
     return c
 
+def cached_sparsemm_gemm_bcsr_factory():
+    try:
+        with open('kernel_cache.json', 'r') as f:
+            cache = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError('Kernel cache not found. Run the autotuner first.')
+    
+    arch = get_arch()
+    
+    def read_configs(BLOCK_SIZE_M, sparsity):
+        if arch not in cache:
+            raise ValueError('Arch not found in cache')
+        if BLOCK_SIZE_M not in cache[arch]:
+            raise ValueError('BLOCK_SIZE_M not found in cache')
+        if sparsity not in cache[arch][BLOCK_SIZE_M]:
+            raise ValueError('Sparsity not found in cache')
+        return cache[arch][BLOCK_SIZE_M][sparsity]
+    
+    def cached_sparsemm_gemm_bcsr(a, b, BLOCK_SIZE_M=16):
+        M, K = a.shape
+        K_b, N = b.shape
+        assert K == K_b, 'Matrix dimensions do not match'
+        assert M % BLOCK_SIZE_M == 0, 'M must be divisible by BLOCK_SIZE_M'
+
+        a_row_ptr, a_col_ind, a_val = dense_to_bcsr(a, BLOCK_SIZE_M)
+        total_vectors = M * N // BLOCK_SIZE_M
+        activated_vectors = a_col_ind.numel()
+        sparsity = 1.0 - activated_vectors / total_vectors
+        sparsity = round(sparsity / 0.05) * 0.05
+        
+        cfgs = read_configs(BLOCK_SIZE_M, sparsity)
+
+        c = torch.empty((M, N), device=a_row_ptr.device, dtype=torch.float16)
+        grid = (triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, cfgs['BLOCK_SIZE_N']), )
+
+        sparsemm_gemm_bcsr_kernel[grid](
+            a_row_ptr, a_col_ind, a_val, b, c,
+            M, N, K,
+            b.stride(0), b.stride(1),
+            c.stride(0), c.stride(1),
+            BLOCK_SIZE_M, cfgs['BLOCK_SIZE_N'], cfgs['BLOCK_SIZE_K'],
+            cfgs['GROUP_SIZE_N'],
+            num_warps=cfgs['num_warps'], num_stages=cfgs['num_stages']
+        )
+
+        return c
+
+
+
 def bench_sparsemm_gemm_bcsr(
     batch_size, embed_dim, hidden_dim,
     sparsity=0.9, BLOCK_SIZE_M=16, BLOCK_SIZE_N=16, BLOCK_SIZE_K=16, GROUP_SIZE_N=4,
     num_warps=4, num_stages=2
 ):
     A = torch.ones((batch_size, embed_dim), device="cuda", dtype=torch.float16)
-    # Randomly select 90% of the elements to be zero
     mask = torch.rand((batch_size // BLOCK_SIZE_M, embed_dim), device=A.device) < sparsity
     expanded_mask = torch.repeat_interleave(mask, BLOCK_SIZE_M, dim=0)
     A[expanded_mask] = 0
